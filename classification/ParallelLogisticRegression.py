@@ -6,11 +6,13 @@ from SparseVector import SparseVector
 from LogisticRegression import readBeta, writeBeta, gradLogisticLoss, logisticLoss, lineSearch
 from operator import add
 from pyspark import SparkContext
+import json
 
 """
 Parameters example: 
   --testdata "mushrooms/mushrooms.test" --beta "beta" --lam 0.0 --max_iter 20 --eps 0.1 --N 8 mushrooms/mushrooms.train
   --testdata "newsgroups/news.test" --beta "beta" --lam 0.0 --max_iter 20 --eps 0.1 --N 8 newsgroups/news.train
+  --testdata "newsgroups/news.test" --beta "beta" --lam 0.0 --max_iter 50 --eps 0.1 --plot --N 8 newsgroups/news.train
 """
 
 
@@ -33,6 +35,15 @@ def readDataRDD(input_file, spark_context):
         .map(eval) \
         .map(lambda (x, y): (SparseVector(x), y))
 
+def writePlot(output, plot_data):
+    """
+    Serialize the plot_data into JSON format
+    :param output:
+    :param plot_data:
+    :return:
+    """
+    with open(output, 'w') as fh:
+        fh.write(json.dumps(plot_data))
 
 def getAllFeaturesRDD(dataRDD):
     """ Get all the features present in grouped dataset dataRDD.
@@ -118,7 +129,7 @@ def test(dataRDD, beta):
     REC = 1. * TP / (TP + FN)
     return ACC, PRE, REC
 
-def train(dataRDD, beta_0, lam, max_iter, eps, test_data=None):
+def train(dataRDD, beta_0, lam, max_iter, eps, test_data=None, plot_data=None):
     k = 0
     gradNorm = 2 * eps
     beta = beta_0
@@ -138,6 +149,13 @@ def train(dataRDD, beta_0, lam, max_iter, eps, test_data=None):
             print 'k = ', k, '\tt = ', time() - start, '\tL(β_k) = ', obj, '\t||∇L(β_k)||_2 = ', gradNorm, '\tgamma = ', gamma
         else:
             acc, pre, rec = test(test_data, beta)
+            end = time() - start
+            if plot_data is not None:
+                plot_data['period'].append(end)
+                plot_data['gradNorm'].append(gradNorm)
+                plot_data['acc'].append(acc)
+                plot_data['pre'].append(pre)
+                plot_data['rec'].append(rec)
             print 'k = ', k, '\tt = ', time() - start, '\tL(β_k) = ', obj, '\t||∇L(β_k)||_2 = ', gradNorm, '\tgamma = ', gamma, '\tACC = ', acc, '\tPRE = ', pre, '\tREC = ', rec
         k = k + 1
 
@@ -157,7 +175,9 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter', type=int, default=100, help='Maximum number of iterations')
     parser.add_argument('--eps', type=float, default=0.1,
                         help='ε-tolerance. If the l2_norm gradient is smaller than ε, gradient descent terminates.')
-    parser.add_argument('--N', type=int, default=2, help='Level of parallelism')
+    parser.add_argument('--N', type=int, default=20, help='Level of parallelism')
+    parser.add_argument('--plot', default=False,
+                        help='Plot the data', action='store_true')
 
     verbosity_group = parser.add_mutually_exclusive_group(required=False)
     verbosity_group.add_argument('--verbose', dest='verbose', action='store_true')
@@ -187,8 +207,21 @@ if __name__ == "__main__":
     beta0 = SparseVector({})
 
     print 'Training on data from', args.traindata, 'with λ =', args.lam, ', ε =', args.eps, ', max iter = ', args.max_iter
-    beta, gradNorm, k = train(traindata, beta_0=beta0, lam=args.lam, max_iter=args.max_iter, eps=args.eps,
-                              test_data=testdata)
+    if args.plot is not None:
+        plot_data = {
+            'period': [],
+            'gradNorm': [],
+            'acc': [],
+            'pre': [],
+            'rec': []
+        }
+        beta, gradNorm, k = train(traindata, beta_0=beta0, lam=args.lam, max_iter=args.max_iter, eps=args.eps,
+                                  test_data=testdata, plot_data=plot_data)
+        writePlot('plot_data_parallel_1.0.json', plot_data)
+        print 'Plot data is saved.'
+    else:
+        beta, gradNorm, k = train(traindata, beta_0=beta0, lam=args.lam, max_iter=args.max_iter, eps=args.eps,
+                                  test_data=testdata)
     print 'Algorithm ran for', k, 'iterations. Converged:', gradNorm < args.eps
     print 'Saving trained β in', args.beta
     writeBeta(args.beta, beta)

@@ -3,9 +3,12 @@ import numpy as np
 import argparse
 from time import time
 from SparseVector import SparseVector
+import json
 
 """
-Parameter example: --testdata "mushrooms/mushrooms.test" --beta "beta" --lam 0.2 --max_iter 20 --eps 0.1 mushrooms/mushrooms.train
+Parameter example: 
+  --testdata "mushrooms/mushrooms.test" --beta "beta" --lam 0.2 --max_iter 20 --eps 0.1 mushrooms/mushrooms.train
+  --testdata "newsgroups/news.test" --beta "beta" --lam 0.0 --max_iter 50 --eps 0.1 --plot newsgroups/news.train
 """
 
 
@@ -17,8 +20,8 @@ def readBeta(input):
     beta = SparseVector({})
     with open(input, 'r') as fh:
         for line in fh:
-            (feat, val) = eval(line.strip())
-            beta[feat] = val
+            (feat, val) = line.strip().strip('()').split(',')
+            beta[feat] = float(val)
     return beta
 
 
@@ -30,6 +33,16 @@ def writeBeta(output, beta):
     with open(output, 'w') as fh:
         for key in beta:
             fh.write('(%s,%f)\n' % (key, beta[key]))
+
+def writePlot(output, plot_data):
+    """
+    Serialize the plot_data into JSON format
+    :param output:
+    :param plot_data:
+    :return:
+    """
+    with open(output, 'w') as fh:
+        fh.write(json.dumps(plot_data))
 
 
 def readData(input_file):
@@ -209,7 +222,7 @@ def test(data, beta):
     return ACC, PRE, REC
 
 
-def train(data, beta_0, lam, max_iter, eps, test_data=None):
+def train(data, beta_0, lam, max_iter, eps, test_data=None, plot_data=None):
     k = 0
     gradNorm = 2 * eps
     beta = beta_0
@@ -229,11 +242,17 @@ def train(data, beta_0, lam, max_iter, eps, test_data=None):
             print 'k = ', k, '\tt = ', time() - start, '\tL(β_k) = ', obj, '\t||∇L(β_k)||_2 = ', gradNorm, '\tgamma = ', gamma
         else:
             acc, pre, rec = test(test_data, beta)
-            print 'k = ', k, '\tt = ', time() - start, '\tL(β_k) = ', obj, '\t||∇L(β_k)||_2 = ', gradNorm, '\tgamma = ', gamma, '\tACC = ', acc, '\tPRE = ', pre, '\tREC = ', rec
+            end = time() - start
+            if plot_data is not None:
+                plot_data['period'].append(end)
+                plot_data['gradNorm'].append(gradNorm)
+                plot_data['acc'].append(acc)
+                plot_data['pre'].append(pre)
+                plot_data['rec'].append(rec)
+            print 'k = ', k, '\tt = ', end, '\tL(β_k) = ', obj, '\t||∇L(β_k)||_2 = ', gradNorm, '\tgamma = ', gamma, '\tACC = ', acc, '\tPRE = ', pre, '\tREC = ', rec
         k = k + 1
 
     return beta, gradNorm, k
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Logistic Regression.',
@@ -248,6 +267,8 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter', type=int, default=100, help='Maximum number of iterations')
     parser.add_argument('--eps', type=float, default=0.1,
                         help='ε-tolerance. If the l2_norm gradient is smaller than ε, gradient descent terminates.')
+    parser.add_argument('--plot', default=False,
+                        help='Plot the data', action='store_true')
 
     args = parser.parse_args()
 
@@ -265,8 +286,21 @@ if __name__ == "__main__":
     beta0 = SparseVector({})
 
     print 'Training on data from', args.traindata, 'with λ =', args.lam, ', ε =', args.eps, ', max iter = ', args.max_iter
-    beta, gradNorm, k = train(traindata, beta_0=beta0, lam=args.lam, max_iter=args.max_iter, eps=args.eps,
-                              test_data=testdata)
+    if args.plot is not None:
+        plot_data = {
+            'period': [],
+            'gradNorm': [],
+            'acc': [],
+            'pre': [],
+            'rec': []
+        }
+        beta, gradNorm, k = train(traindata, beta_0=beta0, lam=args.lam, max_iter=args.max_iter, eps=args.eps,
+                                  test_data=testdata, plot_data=plot_data)
+        writePlot('plot_data_non_parallel.json', plot_data)
+        print 'Plot data is saved.'
+    else:
+        beta, gradNorm, k = train(traindata, beta_0=beta0, lam=args.lam, max_iter=args.max_iter, eps=args.eps,
+                                  test_data=testdata)
     print 'Algorithm ran for', k, 'iterations. Converged:', gradNorm < args.eps
     print 'Saving trained β in', args.beta
     writeBeta(args.beta, beta)
